@@ -8,6 +8,7 @@ from curses import ascii
 from time import sleep
 import signal
 
+CTRL_F = 6
 CTRL_X = 24
 
 # BOARD mode - PIN numbers
@@ -21,7 +22,7 @@ SPI_BUS = 0
 SPI_CS = 0
 
 mcp = MCP23S17(bus = SPI_BUS, pin_cs = SPI_CS,
-               pin_reset = P_RESET, device_id = 0)
+               pin_reset = P_RESET, device_id = 0)               
 
 def mcp_setup():
     mcp.open()
@@ -54,6 +55,29 @@ def gpio_setup():
     GPIO.output(KBD_STROBE, GPIO.LOW)
     GPIO.output(OUT_RDA, GPIO.LOW)
 
+#send a file
+def sendFile(stdscr):
+    stdscr.addstr("Enter filename to send: ")
+    stdscr.nodelay(0)
+    curses.echo()
+    file_name = stdscr.getstr().decode(encoding="utf=8")
+    curses.noecho()
+    stdscr.nodelay(1)
+    stdscr.addstr("Sending " + file_name + "\n")
+    stdscr.refresh()
+    file_read = open(file_name, "r")
+    for line in file_read:
+        stdscr.addstr(line, curses.color_pair(2))
+        stdscr.refresh()
+        for ch in line:
+            send(ord(ch))
+            curses.napms(3)
+            readDisplayAll(stdscr)
+    file_read.close()
+    readDisplayAll(stdscr)      # any left over chars
+
+    stdscr.addstr("\nSending complete\n")
+
 # send character to 6502
 def send(ch):
     if ch == 10:                       # convert LF to CR for Apple 1
@@ -76,16 +100,33 @@ def recieve():
             ch = 10
     return ch
 
+def display(stdscr, outp):
+    if outp == 0x5F:            # APPLE1 del character
+        delCh(stdscr)
+    elif outp >= 0:
+        stdscr.addch(outp, curses.color_pair(1))
+        stdscr.refresh()    
+
+def readDisplayAll(stdscr):
+    outp = 0
+    while outp >= 0:                # read as many as poss
+        outp = recieve()
+        display(stdscr, outp)    
+
+
 def initTerminal():
     stdscr = curses.initscr()
+    curses.start_color()
     curses.noecho()
     curses.cbreak()
     stdscr.keypad(1)
     stdscr.clear()
     stdscr.nodelay(1)
     stdscr.scrollok(1)
-    stdscr.addstr('RPi RC6502 Terminal by rockcat\nCtrl-X to quit\n\n')
+    stdscr.addstr('RPi RC6502 Terminal by rockcat\nCtrl+F : Send file\nCtrl+X : Quit\n\n')
     stdscr.refresh()
+    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     return stdscr
 
 def quit(stdscr):
@@ -108,16 +149,13 @@ def process(stdscr):
         inp = stdscr.getch()
         if inp == CTRL_X:
             quit(stdscr)
-        if inp != curses.ERR:
+        elif inp == CTRL_F:
+            sendFile(stdscr)
+        elif inp != curses.ERR:
             if ascii.islower(inp):
                 inp = inp - 32              # to upper case
             send(inp)
-        outp = recieve()
-        if outp == 0x5F:            # APPLE1 del character
-            delCh(stdscr)
-        elif outp >= 0:
-            stdscr.addch(outp)
-            stdscr.refresh()
+        readDisplayAll(stdscr)
 
 def ctrlc_handler(sig, frame):
     send(3)
